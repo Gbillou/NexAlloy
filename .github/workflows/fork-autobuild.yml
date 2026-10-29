@@ -29,6 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      # Pin gh to this fork: with an `upstream` remote present, gh would otherwise target
+      # NexAlloy/NexAlloy (the first run tried to upload there and got a 403).
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v6
         with:
