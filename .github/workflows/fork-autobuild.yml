@@ -7,6 +7,9 @@
 # A merge conflict fails the run, and GitHub mails the repo owner.
 #
 # Upstream's own "Android CI" / "Android Release CI" are disabled in this fork.
+#
+# fork-support.md goes into the release notes: app versions our patches support beyond
+# upstream's last "Support `X`". nexguard on the phone takes the higher of the two.
 
 name: Fork autobuild
 
@@ -89,6 +92,8 @@ jobs:
           cat > "$notes" <<EOF
           Gbillou fork build: our patches ${{ steps.sync.outputs.ours }} merged onto upstream NexAlloy ${{ steps.sync.outputs.upstream }}.
           Built $(date -u +%Y-%m-%dT%H:%M:%SZ). Signed with the fork key, not the official one.
+
+          $(cat fork-support.md 2>/dev/null)
 
           sha256: $sha
           fork-key: ${{ steps.sync.outputs.ours }}-${{ steps.sync.outputs.upstream }}
