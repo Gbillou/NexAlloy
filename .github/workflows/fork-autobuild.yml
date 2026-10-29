@@ -1,0 +1,101 @@
+# Gbillou fork: build upstream main + our patches, signed with our key, into the
+# `autobuild` release that nexguard on the phone installs.
+#
+# The upstream merge happens only in this checkout and is never pushed: a token from
+# Actions may not push commits that touch workflow files, and upstream edits theirs.
+# Our main therefore holds just our patches; every build re-merges current upstream.
+# A merge conflict fails the run, and GitHub mails the repo owner.
+#
+# Upstream's own "Android CI" / "Android Release CI" are disabled in this fork.
+
+name: Fork autobuild
+
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: fork-autobuild
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Merge upstream main
+        id: sync
+        run: |
+          git config user.name "nexalloy-fork-autobuild"
+          git config user.email "nexalloy-fork-autobuild@users.noreply.github.com"
+          git remote add upstream https://github.com/NexAlloy/NexAlloy
+          git fetch -q upstream main
+          ours=$(git rev-parse --short HEAD)
+          upstream=$(git rev-parse --short upstream/main)
+          git merge --no-edit upstream/main
+          git submodule update --init --recursive
+          echo "ours=$ours" >> "$GITHUB_OUTPUT"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          echo "build=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          built=$(gh release view autobuild --json body -q .body 2>/dev/null | grep -o 'fork-key: [0-9a-f]*-[0-9a-f]*' || true)
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$built" = "fork-key: $ours-$upstream" ]; then
+            echo "Nothing new since the last build ($ours on $upstream)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK
+        if: steps.sync.outputs.skip != 'true'
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Write signing key
+        if: steps.sync.outputs.skip != 'true'
+        run: |
+          echo KEYSTORE_PASSWORD='${{ secrets.KEYSTORE_PASSWORD }}' > signing.properties
+          echo KEYSTORE_ALIAS='${{ secrets.KEYSTORE_ALIAS }}' >> signing.properties
+          echo KEYSTORE_ALIAS_PASSWORD='${{ secrets.KEYSTORE_PASSWORD }}' >> signing.properties
+          echo KEYSTORE_FILE=../key.jks >> signing.properties
+          echo '${{ secrets.KEYSTORE }}' | base64 --decode > key.jks
+
+      - name: Build release
+        if: steps.sync.outputs.skip != 'true'
+        run: chmod +x gradlew && ./gradlew assembleRelease
+
+      - name: Publish autobuild release
+        if: steps.sync.outputs.skip != 'true'
+        run: |
+          apk="NexAlloy-${{ steps.sync.outputs.build }}.apk"
+          mv app/build/outputs/apk/release/app-release.apk "$apk"
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          notes=$(mktemp)
+          cat > "$notes" <<EOF
+          Gbillou fork build: our patches ${{ steps.sync.outputs.ours }} merged onto upstream NexAlloy ${{ steps.sync.outputs.upstream }}.
+          Built $(date -u +%Y-%m-%dT%H:%M:%SZ). Signed with the fork key, not the official one.
+
+          sha256: $sha
+          fork-key: ${{ steps.sync.outputs.ours }}-${{ steps.sync.outputs.upstream }}
+          EOF
+          if ! gh release view autobuild >/dev/null 2>&1; then
+            gh release create autobuild --prerelease --title "Fork autobuild" --notes-file "$notes" --target main
+          fi
+          old=$(gh release view autobuild --json assets -q '.assets[].name')
+          gh release upload autobuild "$apk" --clobber
+          gh release edit autobuild --notes-file "$notes"
+          for a in $old; do
+            [ "$a" = "$apk" ] || gh release delete-asset autobuild "$a" -y
+          done
