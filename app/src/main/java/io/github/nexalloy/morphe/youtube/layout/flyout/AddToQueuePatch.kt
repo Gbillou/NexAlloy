@@ -7,6 +7,7 @@
 
 package io.github.nexalloy.morphe.youtube.layout.flyout
 
+import app.morphe.extension.shared.Logger
 import app.morphe.extension.youtube.patches.AddToQueuePatch
 import app.morphe.extension.youtube.patches.LocalQueuePatch
 import io.github.nexalloy.morphe.setExtensionIsPatchIncluded
@@ -44,11 +45,23 @@ val addToQueuePatch = patch(
         )
     )
 
+    // While casting, the stock queue rows add the video to the TV queue. Leave them alone.
+    var castConnected = false
+    ::mdxCastStateChangedMethod.hookMethod {
+        before {
+            val connected = (it.args[0] as Enum<*>).name == "CONNECTED"
+            if (connected != castConnected) {
+                castConnected = connected
+                Logger.printInfo { "Cast connected: $connected" }
+            }
+        }
+    }
+
     val runnableField = ::feedFlyoutButtonRunnableField.field
     FeedFlyoutButtonsInitializerFingerprint.hookMethod(scopedHook(::feedFlyoutMenuItemOptionalMethod.method) {
         before {
             val menuItem = it.args[0]
-            if (runnableField.declaringClass.isInstance(menuItem)) {
+            if (!castConnected && runnableField.declaringClass.isInstance(menuItem)) {
                 runnableField.set(menuItem, AddToQueuePatch.replaceButtonRunnable(runnableField.get(menuItem) as Runnable?))
             }
         }
@@ -60,6 +73,7 @@ val addToQueuePatch = patch(
     val enumMethodCall = ::enumMethodCall.method
     ContextualMenuItemBuilderOnClickFingerprint.hookMethod {
         before {
+            if (castConnected) return@before
             val message = messageField.get(it.thisObject)
             if (!getSubMessage.parameterTypes.single().isInstance(message)) return@before
             val buttonInfo = getSubMessage(null, message)
@@ -73,7 +87,7 @@ val addToQueuePatch = patch(
     if (!is_21_05_or_greater) {
         FeedFlyoutButtonsInitializerOnItemClickFingerprint.hookMethod {
             before {
-                if (AddToQueuePatch.replaceOnItemClick(it.args[2] as Int)) {
+                if (!castConnected && AddToQueuePatch.replaceOnItemClick(it.args[2] as Int)) {
                     it.result = null
                 }
             }

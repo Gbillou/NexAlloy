@@ -67,6 +67,38 @@ private fun videoIdField(messageClass: FindClassFunc) = findFieldDirect {
     ).instructionMatches.last().instruction.fieldRef!!
 }
 
+private const val MDX_ENTRY_POINT_BUTTON_CLASS =
+    "com.google.android.libraries.youtube.mdx.mediaroute.entrypoint.MdxEntryPointButton"
+
+/**
+ * Cast icon state enum: UNKNOWN, DISCONNECTED, ACTIVE_DEVICE_DETECTED,
+ * ACTIVE_DEVICE_DETECTED_WITH_PLAYBACK, CONNECTING, CONNECTED.
+ */
+val mdxCastStateClass = findClassDirect {
+    findClass {
+        matcher {
+            usingStrings("ACTIVE_DEVICE_DETECTED_WITH_PLAYBACK", "CONNECTING", "CONNECTED")
+        }
+    }.single()
+}
+
+/**
+ * Pushes each cast state change to the cast buttons.
+ */
+val mdxCastStateChangedMethod = findMethodDirect {
+    val stateClass = mdxCastStateClass().name
+    findMethod {
+        matcher {
+            returnType = "void"
+            paramTypes(stateClass)
+            addInvoke {
+                declaredClass(MDX_ENTRY_POINT_BUTTON_CLASS)
+                paramTypes(stateClass)
+            }
+        }
+    }.single()
+}
+
 internal object FeedBottomSheetFlyoutFingerprint : Fingerprint(
     classFingerprint = Fingerprint(
         parameters = listOf("Landroid/os/Bundle;"),
